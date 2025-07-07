@@ -45,6 +45,8 @@ async def broadcast_room_update(room_id: str):
     room = rooms[room_id]
     users = [
         {
+            "id": u["id"],
+            "avatar": u["avatar"],
             "nickname": u["nickname"],
             "ready":    u["ready"],
             "isHost":   sid == room["host"],
@@ -62,13 +64,20 @@ async def connect(sid, environ):
 
 @sio.event
 async def join_room(sid, data):
-    room_id, nick = data["roomId"], data["nickname"]
+    room_id = data["roomId"]
     if room_id not in rooms:
         rooms[room_id] = {"users": {}, "order": [], "host": sid, "state": "waiting"}
     room = rooms[room_id]
-    room["users"][sid] = {"nickname": nick, "ready": sid == room["host"], "mic": False}
+    room["users"][sid] = {
+        "id": data["userId"],
+        "avatar": data["avatar"],
+        "nickname": data["nickname"],
+        "ready": sid == room["host"],
+        "mic": False
+    }
     if sid not in room["order"]:
         room["order"].append(sid)
+
     await sio.enter_room(sid, room_id)
     await broadcast_room_update(room_id)
 
@@ -102,17 +111,14 @@ async def mic_ready(sid, data):
 
 # ────────────────────────────── 게임 시작
 @sio.event
-async def start_game(sid):
+async def start_game(sid, data):
     for room_id, room in rooms.items():
         if sid not in room["users"] or sid != room["host"]:
             continue
-        if not all(u.get("ready") and u.get("mic") for u in room["users"].values()):
-            await sio.emit(
-                "start_failed",
-                {"reason": "모든 플레이어가 Ready 상태이고, 마이크를 허용해야 합니다."},
-                to=sid,
-            )
+
+        if room.get("state") == "playing":
             return
+
         room.update({"turn": 0, "scores": {u: 0 for u in room["users"]}, "state": "playing", "keywords": KEYWORDS.copy()})
 
         await sio.emit("game_intro", {}, room=room_id)
