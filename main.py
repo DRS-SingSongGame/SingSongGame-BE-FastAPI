@@ -82,7 +82,7 @@ async def join_room(sid, data):
     await broadcast_room_update(room_id)
 
 @sio.event
-async def toggle_ready(sid):
+async def toggle_ready(sid, data):
     for rid, room in rooms.items():
         if sid in room["users"]:
             room["users"][sid]["ready"] ^= True
@@ -90,7 +90,7 @@ async def toggle_ready(sid):
             break
 
 @sio.event
-async def leave_room(sid):
+async def leave_room(sid, data):
     for rid, room in rooms.items():
         if sid in room["users"]:
             del room["users"][sid]
@@ -99,7 +99,7 @@ async def leave_room(sid):
             break
 
 @sio.event
-async def disconnect(sid):
+async def disconnect(sid, data):
     await leave_room(sid)
 
 @sio.event
