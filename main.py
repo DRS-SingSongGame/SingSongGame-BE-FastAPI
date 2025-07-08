@@ -43,3 +43,8 @@ from utils import *
 @app.get("/fast/healthz")
 async def healthz():
     return {"status": "ok"}
+
+@app.post("/fast/debug-analyze")
+async def debug_analyze(acr_response: dict, keyword: dict):
+    result = analyze_sings_against_keyword(acr_response, keyword)
+    return result
