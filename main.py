@@ -1,8 +1,6 @@
 import sys
 sys.path.append("./.venv/Lib/site-packages")
 import os
-from dotenv import load_dotenv # type: ignore
-load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from collections import defaultdict
@@ -21,7 +19,7 @@ app.add_middleware(
 sio_app = socketio.ASGIApp(
     sio,
     other_asgi_app=app,
-    socketio_path="fast/socket.io"
+    socketio_path="/fast/socket.io"
 )
 
 # rooms, round_buffer, round_events, listen_acks 등은 여기에 유지
