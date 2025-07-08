@@ -136,13 +136,19 @@ async def handle_submit_recording(sid, data):
 
     # 분석 비동기 태스크
     async def analyze():
-        ACR_HOST, http_uri = "identify-ap-southeast-1.acrcloud.com", "/v1/identify"
+    try:
+        # ACR 인증 정보
+        ACR_HOST = "identify-ap-southeast-1.acrcloud.com"
+        http_uri = "/v1/identify"
         ACR_KEY = os.getenv("ACR_KEY")
         ACR_SEC = os.getenv("ACR_SEC")
+        if not ACR_KEY or not ACR_SEC:
+            raise ValueError("ACR_KEY 또는 ACR_SEC 환경변수가 비어 있습니다")
         data_type, version = "audio", "1"
         timestamp = str(int(time.time()))
         string_to_sign = "\n".join(["POST", http_uri, ACR_KEY, data_type, version, timestamp])
         signature = base64.b64encode(hmac.new(ACR_SEC.encode(), string_to_sign.encode(), hashlib.sha1).digest()).decode()
+        # 웹에서 받은 녹음 파일 (이 예시에선 audio 변수가 바깥에서 정의되어 있다고 가정)
         files = {
             "sample": ("recording.webm", audio, "audio/webm"),
             "access_key": (None, ACR_KEY),
@@ -152,11 +158,26 @@ async def handle_submit_recording(sid, data):
             "timestamp": (None, timestamp),
             "signature_version": (None, version),
         }
-        resp = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: requests.post(f"https://{ACR_HOST}{http_uri}", files=files, timeout=10)
-        )
+        print("[DEBUG] ACRCloud 요청 준비 완료")
+        # ACRCloud로 비동기 POST 요청
+        loop = asyncio.get_event_loop()
+        resp = await loop.run_in_executor(None, lambda: requests.post(f"https://{ACR_HOST}{http_uri}", files=files, timeout=10))
+        print(f"[DEBUG] ACRCloud 응답 코드: {resp.status_code}")
+        print(f"[DEBUG] ACRCloud 응답 본문 (앞부분): {resp.text[:300]}")
+        resp.raise_for_status()  # 4xx/5xx 예외 발생
         return analyze_sings_against_keyword(resp.json(), keyword)
+
+        except Exception as e:
+            print("[ERROR] ACR 분석 중 예외 발생:")
+            import traceback
+            traceback.print_exc()
+            return {
+                "matched": False,
+                "fallback": None,
+                "title": None,
+                "artist": None,
+                "score": -1,
+            }
 
     # buffer 저장 및 이벤트 set (run_rounds 에서 생성된 이벤트가 있을 때만)
     round_buffer[key] = {"audio_b64": audio_b64, "future": asyncio.create_task(analyze())}
