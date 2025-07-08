@@ -140,8 +140,8 @@ async def handle_submit_recording(sid, data):
             # ACR 인증 정보
             ACR_HOST = "identify-ap-southeast-1.acrcloud.com"
             http_uri = "/v1/identify"
-            ACR_KEY = os.getenv("ACR_KEY")
-            ACR_SEC = os.getenv("ACR_SEC")
+            ACR_KEY = os.getenv("ACR_KEY", "").strip()
+            ACR_SEC = os.getenv("ACR_SEC", "").strip()
             if not ACR_KEY or not ACR_SEC:
                 raise ValueError("ACR_KEY 또는 ACR_SEC 환경변수가 비어 있습니다")
             data_type, version = "audio", "1"
@@ -154,19 +154,19 @@ async def handle_submit_recording(sid, data):
 
             signature = base64.b64encode(hmac.new(ACR_SEC.encode(), string_to_sign.encode(), hashlib.sha1).digest()).decode()
             # 웹에서 받은 녹음 파일 (이 예시에선 audio 변수가 바깥에서 정의되어 있다고 가정)
-            files = {
-                "sample": ("recording.webm", audio, "audio/webm"),
-                "access_key": (None, ACR_KEY),
-                "data_type": (None, data_type),
-                "signature": (None, signature),
-                "sample_bytes": (None, str(len(audio))),
-                "timestamp": (None, timestamp),
-                "signature_version": (None, version),
+            files = {"sample": ("recording.webm", audio, "audio/webm")}
+            data = {
+                "access_key": ACR_KEY,
+                "data_type": "audio",
+                "signature_version": "1",
+                "signature": signature,
+                "sample_bytes": str(len(audio)),
+                "timestamp": timestamp,
             }
             print("[DEBUG] ACRCloud 요청 준비 완료")
             # ACRCloud로 비동기 POST 요청
             loop = asyncio.get_event_loop()
-            resp = await loop.run_in_executor(None, lambda: requests.post(f"https://{ACR_HOST}{http_uri}", files=files, timeout=10))
+            resp = await loop.run_in_executor(None, lambda: requests.post(f"https://{ACR_HOST}{http_uri}", files=files, timeout=10, data=data))
             print(f"[DEBUG] ACRCloud 응답 코드: {resp.status_code}")
             print(f"[DEBUG] ACRCloud 응답 본문 (앞부분): {resp.text[:300]}")
             resp.raise_for_status()  # 4xx/5xx 예외 발생
