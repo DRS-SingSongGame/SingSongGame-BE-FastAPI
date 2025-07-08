@@ -40,4 +40,6 @@ from game.logic import *
 from game.rounds import *
 from utils import *
 
-# (필요시, 각 모듈에서 sio, rooms 등 공유 객체를 import 하거나, main.py에서 의존성 주입)
+@app.get("/fast/healthz")
+async def healthz():
+    return {"status": "ok"}
