@@ -24,7 +24,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-sio_app = socketio.ASGIApp(sio, other_asgi_app=app)
+sio_app = socketio.ASGIApp(
+    sio,
+    other_asgi_app=app,
+    socketio_path="fast/socket.io"
+)
 
 # ────────────────────────────── 키워드 목록
 KEYWORDS = [
@@ -45,6 +49,8 @@ async def broadcast_room_update(room_id: str):
     room = rooms[room_id]
     users = [
         {
+            "id": u["id"],
+            "avatar": u["avatar"],
             "nickname": u["nickname"],
             "ready":    u["ready"],
             "isHost":   sid == room["host"],
@@ -61,19 +67,37 @@ async def connect(sid, environ):
     print(f"🔌 {sid} connected")
 
 @sio.event
-async def join_room(sid, data):
-    room_id, nick = data["roomId"], data["nickname"]
+async def join_room(sid, data=None):
+    room_id = data["roomId"]
+    user_id  = data["userId"]
+
     if room_id not in rooms:
         rooms[room_id] = {"users": {}, "order": [], "host": sid, "state": "waiting"}
+
     room = rooms[room_id]
-    room["users"][sid] = {"nickname": nick, "ready": sid == room["host"], "mic": False}
-    if sid not in room["order"]:
-        room["order"].append(sid)
+
+    stale_sids = [old_sid for old_sid, u in room["users"].items() if u["id"] == user_id]
+    for old_sid in stale_sids:
+        room["users"].pop(old_sid, None)
+        room["order"]  = [s for s in room["order"] if s != old_sid]
+
+        if room["host"] == old_sid:
+            room["host"] = sid
+
+    room["users"][sid] = {
+        "id": data["userId"],
+        "avatar": data["avatar"],
+        "nickname": data["nickname"],
+        "ready": sid == room["host"],
+        "mic": False
+    }
+    room["order"].append(sid)
+
     await sio.enter_room(sid, room_id)
     await broadcast_room_update(room_id)
 
 @sio.event
-async def toggle_ready(sid):
+async def toggle_ready(sid, data=None):
     for rid, room in rooms.items():
         if sid in room["users"]:
             room["users"][sid]["ready"] ^= True
@@ -81,20 +105,26 @@ async def toggle_ready(sid):
             break
 
 @sio.event
-async def leave_room(sid):
+async def leave_room(sid, data=None):
     for rid, room in rooms.items():
         if sid in room["users"]:
-            del room["users"][sid]
-            await sio.leave_room(sid, rid)
+            room["users"].pop(sid, None)
+            room["order"] = [s for s in room["order"] if s != sid]
+
+            if room["host"] == sid and room["users"]:
+                room["host"] = next(iter(room["users"].keys()))
+
             await broadcast_room_update(rid)
+            if not room["users"]:
+                del rooms[rid]
             break
 
 @sio.event
-async def disconnect(sid):
+async def disconnect(sid, data=None):
     await leave_room(sid)
 
 @sio.event
-async def mic_ready(sid, data):
+async def mic_ready(sid, data=None):
     room_id = data["roomId"]
     if room_id in rooms and sid in rooms[room_id]["users"]:
         rooms[room_id]["users"][sid]["mic"] = True
@@ -102,21 +132,18 @@ async def mic_ready(sid, data):
 
 # ────────────────────────────── 게임 시작
 @sio.event
-async def start_game(sid):
+async def start_game(sid, data=None):
     for room_id, room in rooms.items():
         if sid not in room["users"] or sid != room["host"]:
             continue
-        if not all(u.get("ready") and u.get("mic") for u in room["users"].values()):
-            await sio.emit(
-                "start_failed",
-                {"reason": "모든 플레이어가 Ready 상태이고, 마이크를 허용해야 합니다."},
-                to=sid,
-            )
+
+        if room.get("state") == "playing":
             return
+
         room.update({"turn": 0, "scores": {u: 0 for u in room["users"]}, "state": "playing", "keywords": KEYWORDS.copy()})
 
         await sio.emit("game_intro", {}, room=room_id)
-        await asyncio.sleep(5)
+        await asyncio.sleep(10)
         await run_rounds(room_id)
         break
 
@@ -125,11 +152,11 @@ async def handle_lobby_chat(sid, msg):
     await sio.emit("chat", msg)
 
 @sio.on("room_chat")
-async def handle_room_chat(sid, data):
+async def handle_room_chat(sid, data=None):
     await sio.emit("room_chat", {"message": data["message"]}, room=data["roomId"])
 
 @sio.on("listen_finished")
-async def handle_listen_finished(sid, data):
+async def handle_listen_finished(sid, data=None):
     listen_acks[data["roomId"]].add(sid)
 
 # --- 채점 관련 함수 (상단에 위치) ---
