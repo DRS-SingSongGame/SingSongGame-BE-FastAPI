@@ -32,8 +32,8 @@ sio_app = socketio.ASGIApp(
 
 # ────────────────────────────── 키워드 목록
 KEYWORDS = [
-    {"type": "artist", "name": "장범준", "alias": ["Jang Beom June", "장범준"]},
-    {"type": "artist", "name": "Red Velvet", "alias": ["레드벨벳", "redvelvet"]},
+    {"type": "가수", "name": "장범준", "alias": ["Jang Beom June", "장범준"]},
+    {"type": "가수", "name": "Red Velvet", "alias": ["레드벨벳", "redvelvet"]},
 ]
 
 # ────────────────────────────── 게임 방 상태
