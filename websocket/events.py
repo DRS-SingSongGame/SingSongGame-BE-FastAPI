@@ -146,7 +146,12 @@ async def handle_submit_recording(sid, data):
                 raise ValueError("ACR_KEY 또는 ACR_SEC 환경변수가 비어 있습니다")
             data_type, version = "audio", "1"
             timestamp = str(int(time.time()))
-            string_to_sign = "\n".join(["POST", http_uri, ACR_KEY, data_type, version, timestamp])
+            string_to_sign = "POST\n{}\n{}\n{}\n{}\n{}".format(
+                http_uri, ACR_KEY, data_type, version, timestamp
+            )
+            print("=== string_to_sign ===")
+            print(repr(string_to_sign))  # \n 들이 정확히 들어갔는지 보기 위함
+
             signature = base64.b64encode(hmac.new(ACR_SEC.encode(), string_to_sign.encode(), hashlib.sha1).digest()).decode()
             # 웹에서 받은 녹음 파일 (이 예시에선 audio 변수가 바깥에서 정의되어 있다고 가정)
             files = {
