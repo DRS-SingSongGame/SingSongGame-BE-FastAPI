@@ -32,8 +32,8 @@ sio_app = socketio.ASGIApp(
 
 # ────────────────────────────── 키워드 목록
 KEYWORDS = [
-    {"type": "artist", "name": "Day6", "alias": ["데이식스", "DAY6"]},
-    {"type": "artist", "name": "BLACKPINK", "alias": ["블랙핑크", "Black Pink"]},
+    {"type": "artist", "name": "장범준", "alias": ["Jang Beom June", "장범준"]},
+    {"type": "artist", "name": "Red Velvet", "alias": ["레드벨벳", "redvelvet"]},
 ]
 
 # ────────────────────────────── 게임 방 상태
@@ -250,11 +250,18 @@ async def handle_submit_recording(sid, data):
 
 # ────────────────────────────── 라운드 진행
 async def run_rounds(room_id: str):
+    if room_id not in rooms:
+        return
+    
     room = rooms[room_id]
     order = room["order"]
     kw_pool = room["keywords"]
 
     for turn, sid_turn in enumerate(order):
+        if room_id not in rooms:
+            return
+        room = rooms[room_id]
+        
         if sid_turn not in room["users"] or not kw_pool:
             continue
         keyword = kw_pool.pop(0)
@@ -277,7 +284,9 @@ async def run_rounds(room_id: str):
         event = asyncio.Event()
         round_events[key] = event
         await event.wait()
-        buf = round_buffer.pop(key)
+        buf = round_buffer.pop(key, None)
+        if not buf:
+            continue
         analysis_future = buf["future"]
         audio_b64       = buf["audio_b64"]
         del round_events[key]
@@ -293,7 +302,8 @@ async def run_rounds(room_id: str):
 
         # 5) 분석 결과 전송
         result = await analysis_future
-        room["scores"][sid_turn] += result.get("score", 0)
+        if sid_turn in room["scores"]:
+            room["scores"][sid_turn] += result.get("score", 0)
         await sio.emit("round_result", result, room=room_id)
         await asyncio.sleep(5)
 
