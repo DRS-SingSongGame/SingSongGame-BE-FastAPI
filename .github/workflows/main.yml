@@ -48,6 +48,9 @@ jobs:
 
             docker stop fastapi || true && docker rm fastapi || true
 
+            echo "IMAGE NAME = ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY_FASTAPI }}:${{ github.sha }}"
+
+
             docker run -d --name fastapi -p 8000:8000 \
               -e ACR_KEY=${{ secrets.ACR_KEY }} \
               -e ACR_SEC=${{ secrets.ACR_SEC }} \
