@@ -10,11 +10,11 @@ import hashlib
 import requests
 from collections import defaultdict
 from fastapi import FastAPI
-import socketio
-from main import sio, rooms, round_buffer, round_events, listen_acks, KEYWORDS
+from main import sio, rooms, round_buffer, round_events, listen_acks
 from utils import broadcast_room_update
 from game.logic import analyze_sings_against_keyword
 from game.rounds import run_rounds
+from db import fetch_random_keywords
 
 # rooms, round_buffer, round_events, listen_acks 등은 main.py에서 import 하거나 별도 관리 필요
 
@@ -90,20 +90,45 @@ async def mic_ready(sid, data):
         await broadcast_room_update(room_id)
 
 @sio.event
-async def start_game(sid, data=None):
-    for room_id, room in rooms.items():
-        if sid not in room["users"] or sid != room["host"]:
-            continue
+async def start_game(sid, data):
+    room_id = data.get("roomId")
+    max_rounds = int(data.get("maxRounds"))
+    room = rooms.get(room_id)
 
-        if room.get("state") == "playing":
+    if not room or sid not in room["users"] or sid != room["host"]:
             return
+    if room.get("state") == "playing":
+        return
+    
+    # KEYWORDS = [
+    #     {"type": "가수", "name": "장범준", "alias": ["Jang Beom June", "장범준"]},
+    #     {"type": "가수", "name": "Red Velvet", "alias": ["레드벨벳", "redvelvet"]},
+    # ]
 
-        room.update({"turn": 0, "scores": {u: 0 for u in room["users"]}, "state": "playing", "keywords": KEYWORDS.copy()})
+    # 플레이어 수에 맞춰 키워드 가져오기
+    num_players = len(room["users"])
+    total_keywords = num_players * max_rounds
+    room_keywords = await fetch_random_keywords(total_keywords)
 
-        await sio.emit("game_intro", {}, room=room_id)
-        await asyncio.sleep(10)
-        await run_rounds(room_id)
-        break
+    room.update(
+        {
+            "state": "playing",
+            "turn": 0,
+            "round": 1,
+            "max_rounds": max_rounds,
+            "scores": {u: 0 for u in room["users"]},
+            "keywords": room_keywords,
+            "kw_idx": 0,
+        }
+    )
+
+    await sio.emit(
+        "game_intro",
+        {"round": 1, "maxRounds": room["max_rounds"]},
+        room=room_id,
+    )
+    await asyncio.sleep(10)
+    await run_rounds(room_id)
 
 @sio.on("chat")
 async def handle_lobby_chat(sid, msg):
