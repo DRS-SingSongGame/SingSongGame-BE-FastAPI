@@ -10,11 +10,11 @@ import hashlib
 import requests
 from collections import defaultdict
 from fastapi import FastAPI
-import socketio
-from main import sio, rooms, round_buffer, round_events, listen_acks, KEYWORDS
+from main import sio, rooms, round_buffer, round_events, listen_acks
 from utils import broadcast_room_update
 from game.logic import analyze_sings_against_keyword
 from game.rounds import run_rounds
+from db import fetch_random_keywords
 
 # rooms, round_buffer, round_events, listen_acks 등은 main.py에서 import 하거나 별도 관리 필요
 
@@ -90,20 +90,45 @@ async def mic_ready(sid, data):
         await broadcast_room_update(room_id)
 
 @sio.event
-async def start_game(sid, data=None):
-    for room_id, room in rooms.items():
-        if sid not in room["users"] or sid != room["host"]:
-            continue
+async def start_game(sid, data):
+    room_id = data.get("roomId")
+    max_rounds = int(data.get("maxRounds"))
+    room = rooms.get(room_id)
 
-        if room.get("state") == "playing":
+    if not room or sid not in room["users"] or sid != room["host"]:
             return
+    if room.get("state") == "playing":
+        return
+    
+    # KEYWORDS = [
+    #     {"type": "가수", "name": "장범준", "alias": ["Jang Beom June", "장범준"]},
+    #     {"type": "가수", "name": "Red Velvet", "alias": ["레드벨벳", "redvelvet"]},
+    # ]
 
-        room.update({"turn": 0, "scores": {u: 0 for u in room["users"]}, "state": "playing", "keywords": KEYWORDS.copy()})
+    # 플레이어 수에 맞춰 키워드 가져오기
+    num_players = len(room["users"])
+    total_keywords = num_players * max_rounds
+    room_keywords = await fetch_random_keywords(total_keywords)
 
-        await sio.emit("game_intro", {}, room=room_id)
-        await asyncio.sleep(10)
-        await run_rounds(room_id)
-        break
+    room.update(
+        {
+            "state": "playing",
+            "turn": 0,
+            "round": 1,
+            "max_rounds": max_rounds,
+            "scores": {u: 0 for u in room["users"]},
+            "keywords": room_keywords,
+            "kw_idx": 0,
+        }
+    )
+
+    await sio.emit(
+        "game_intro",
+        {"round": 1, "maxRounds": room["max_rounds"]},
+        room=room_id,
+    )
+    await asyncio.sleep(10)
+    await run_rounds(room_id)
 
 @sio.on("chat")
 async def handle_lobby_chat(sid, msg):
@@ -136,27 +161,48 @@ async def handle_submit_recording(sid, data):
 
     # 분석 비동기 태스크
     async def analyze():
-        ACR_HOST, http_uri = "identify-ap-southeast-1.acrcloud.com", "/v1/identify"
-        ACR_KEY = os.getenv("ACR_KEY")
-        ACR_SEC = os.getenv("ACR_SEC")
-        data_type, version = "audio", "1"
-        timestamp = str(int(time.time()))
-        string_to_sign = "\n".join(["POST", http_uri, ACR_KEY, data_type, version, timestamp])
-        signature = base64.b64encode(hmac.new(ACR_SEC.encode(), string_to_sign.encode(), hashlib.sha1).digest()).decode()
-        files = {
-            "sample": ("recording.webm", audio, "audio/webm"),
-            "access_key": (None, ACR_KEY),
-            "data_type": (None, data_type),
-            "signature": (None, signature),
-            "sample_bytes": (None, str(len(audio))),
-            "timestamp": (None, timestamp),
-            "signature_version": (None, version),
-        }
-        resp = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: requests.post(f"https://{ACR_HOST}{http_uri}", files=files, timeout=10)
-        )
-        return analyze_sings_against_keyword(resp.json(), keyword)
+        try:
+            # ACR 인증 정보
+            ACR_HOST = "identify-ap-southeast-1.acrcloud.com"
+            http_uri = "/v1/identify"
+            ACR_KEY = os.getenv("ACR_KEY", "").strip()
+            ACR_SEC = os.getenv("ACR_SEC", "").strip()
+            if not ACR_KEY or not ACR_SEC:
+                raise ValueError("ACR_KEY 또는 ACR_SEC 환경변수가 비어 있습니다")
+            data_type, version = "audio", "1"
+            timestamp = str(int(time.time()))
+            string_to_sign = "POST\n{}\n{}\n{}\n{}\n{}".format(
+                http_uri, ACR_KEY, data_type, version, timestamp
+            )
+
+            signature = base64.b64encode(hmac.new(ACR_SEC.encode(), string_to_sign.encode(), hashlib.sha1).digest()).decode()
+            # 웹에서 받은 녹음 파일 (이 예시에선 audio 변수가 바깥에서 정의되어 있다고 가정)
+            files = {"sample": ("recording.webm", audio, "audio/webm")}
+            data = {
+                "access_key": ACR_KEY,
+                "data_type": "audio",
+                "signature_version": "1",
+                "signature": signature,
+                "sample_bytes": str(len(audio)),
+                "timestamp": timestamp,
+            }
+            # ACRCloud로 비동기 POST 요청
+            loop = asyncio.get_event_loop()
+            resp = await loop.run_in_executor(None, lambda: requests.post(f"https://{ACR_HOST}{http_uri}", files=files, timeout=10, data=data))
+            resp.raise_for_status()  # 4xx/5xx 예외 발생
+            return analyze_sings_against_keyword(resp.json(), keyword)
+
+        except Exception as e:
+            print("[ERROR] ACR 분석 중 예외 발생:")
+            import traceback
+            traceback.print_exc()
+            return {
+                "matched": False,
+                "fallback": None,
+                "title": None,
+                "artist": None,
+                "score": -1,
+            }
 
     # buffer 저장 및 이벤트 set (run_rounds 에서 생성된 이벤트가 있을 때만)
     round_buffer[key] = {"audio_b64": audio_b64, "future": asyncio.create_task(analyze())}
