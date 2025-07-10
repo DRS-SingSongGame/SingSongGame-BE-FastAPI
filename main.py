@@ -5,6 +5,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from collections import defaultdict
 import socketio
+from fastapi import FastAPI, Depends
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 # ASGI 서버 설정
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
@@ -27,12 +30,6 @@ rooms = {}
 round_buffer = {}
 round_events = {}
 listen_acks = defaultdict(set)
-
-# ────────────────────────────── 키워드 목록
-KEYWORDS = [
-    {"type": "가수", "name": "장범준", "alias": ["Jang Beom June", "장범준"]},
-    {"type": "가수", "name": "Red Velvet", "alias": ["레드벨벳", "redvelvet"]},
-]
 
 # ────────────────────────────── 각종 핸들러 및 게임 로직 import
 from websocket.events import *
