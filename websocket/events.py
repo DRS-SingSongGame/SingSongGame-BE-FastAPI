@@ -174,8 +174,6 @@ async def handle_submit_recording(sid, data):
             string_to_sign = "POST\n{}\n{}\n{}\n{}\n{}".format(
                 http_uri, ACR_KEY, data_type, version, timestamp
             )
-            print("=== string_to_sign ===")
-            print(repr(string_to_sign))  # \n 들이 정확히 들어갔는지 보기 위함
 
             signature = base64.b64encode(hmac.new(ACR_SEC.encode(), string_to_sign.encode(), hashlib.sha1).digest()).decode()
             # 웹에서 받은 녹음 파일 (이 예시에선 audio 변수가 바깥에서 정의되어 있다고 가정)
@@ -188,12 +186,9 @@ async def handle_submit_recording(sid, data):
                 "sample_bytes": str(len(audio)),
                 "timestamp": timestamp,
             }
-            print("[DEBUG] ACRCloud 요청 준비 완료")
             # ACRCloud로 비동기 POST 요청
             loop = asyncio.get_event_loop()
             resp = await loop.run_in_executor(None, lambda: requests.post(f"https://{ACR_HOST}{http_uri}", files=files, timeout=10, data=data))
-            print(f"[DEBUG] ACRCloud 응답 코드: {resp.status_code}")
-            print(f"[DEBUG] ACRCloud 응답 본문 (앞부분): {resp.text[:300]}")
             resp.raise_for_status()  # 4xx/5xx 예외 발생
             return analyze_sings_against_keyword(resp.json(), keyword)
 

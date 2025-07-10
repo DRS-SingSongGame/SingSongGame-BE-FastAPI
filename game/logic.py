@@ -21,7 +21,6 @@ def keyword_match(song: dict, keyword: dict) -> dict | None:
     return None
 
 def analyze_sings_against_keyword(acr_response, keyword):
-    print("✅ analyze_sings_against_keyword() 호출됨")
     sings = []
     for song in acr_response.get("metadata", {}).get("humming", []):
         title = song.get("title", "")
