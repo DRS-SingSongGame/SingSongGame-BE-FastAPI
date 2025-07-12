@@ -12,7 +12,7 @@ from collections import defaultdict
 from fastapi import FastAPI
 from main import sio, rooms, round_buffer, round_events, listen_acks
 from utils import broadcast_room_update
-from game.logic import analyze_sings_against_keyword
+from game.analysis import analyze_recording
 from game.rounds import run_rounds
 from db import fetch_random_keywords
 
@@ -109,7 +109,6 @@ async def start_game(sid, data):
     num_players = len(room["users"])
     total_keywords = num_players * max_rounds
     room_keywords = await fetch_random_keywords(total_keywords)
-
     room.update(
         {
             "state": "playing",
@@ -161,48 +160,9 @@ async def handle_submit_recording(sid, data):
 
     # 분석 비동기 태스크
     async def analyze():
-        try:
-            # ACR 인증 정보
-            ACR_HOST = "identify-ap-southeast-1.acrcloud.com"
-            http_uri = "/v1/identify"
-            ACR_KEY = os.getenv("ACR_KEY", "").strip()
-            ACR_SEC = os.getenv("ACR_SEC", "").strip()
-            if not ACR_KEY or not ACR_SEC:
-                raise ValueError("ACR_KEY 또는 ACR_SEC 환경변수가 비어 있습니다")
-            data_type, version = "audio", "1"
-            timestamp = str(int(time.time()))
-            string_to_sign = "POST\n{}\n{}\n{}\n{}\n{}".format(
-                http_uri, ACR_KEY, data_type, version, timestamp
-            )
-
-            signature = base64.b64encode(hmac.new(ACR_SEC.encode(), string_to_sign.encode(), hashlib.sha1).digest()).decode()
-            # 웹에서 받은 녹음 파일 (이 예시에선 audio 변수가 바깥에서 정의되어 있다고 가정)
-            files = {"sample": ("recording.webm", audio, "audio/webm")}
-            data = {
-                "access_key": ACR_KEY,
-                "data_type": "audio",
-                "signature_version": "1",
-                "signature": signature,
-                "sample_bytes": str(len(audio)),
-                "timestamp": timestamp,
-            }
-            # ACRCloud로 비동기 POST 요청
-            loop = asyncio.get_event_loop()
-            resp = await loop.run_in_executor(None, lambda: requests.post(f"https://{ACR_HOST}{http_uri}", files=files, timeout=10, data=data))
-            resp.raise_for_status()  # 4xx/5xx 예외 발생
-            return analyze_sings_against_keyword(resp.json(), keyword)
-
-        except Exception as e:
-            print("[ERROR] ACR 분석 중 예외 발생:")
-            import traceback
-            traceback.print_exc()
-            return {
-                "matched": False,
-                "fallback": None,
-                "title": None,
-                "artist": None,
-                "score": -1,
-            }
+        # audio: 클라이언트 원본 음성 파일
+        # keyword: {type, name, alias}
+        return await analyze_recording(audio, keyword)
 
     # buffer 저장 및 이벤트 set (run_rounds 에서 생성된 이벤트가 있을 때만)
     round_buffer[key] = {"audio_b64": audio_b64, "future": asyncio.create_task(analyze())}
