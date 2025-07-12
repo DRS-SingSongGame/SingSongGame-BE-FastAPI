@@ -29,7 +29,7 @@ async def run_rounds(room_id: str):
                 },
                 room=room_id,
             )
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
 
             # 2) 녹음 시작
             await sio.emit("record_begin", {"playerSid": sid_turn, "turn": turn}, room=room_id)
