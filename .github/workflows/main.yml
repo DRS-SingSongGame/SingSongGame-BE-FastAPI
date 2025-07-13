@@ -56,4 +56,11 @@ jobs:
             docker run -d --name fastapi -p 8000:8000 \
               -e ACR_KEY="${{ secrets.ACR_KEY }}" \
               -e ACR_SEC="${{ secrets.ACR_SEC }}" \
+              -e FAST_DB_HOST="${{ secrets.FAST_DB_HOST }}" \
+              -e FAST_DB_PORT="${{ secrets.FAST_DB_PORT }}" \
+              -e FAST_DB_USER="${{ secrets.FAST_DB_USER }}" \
+              -e FAST_DB_PASS="${{ secrets.FAST_DB_PASS }}" \
+              -e FAST_DB_NAME="${{ secrets.FAST_DB_NAME }}" \
+              -e LF_API_KEY="${{ secrets.LF_API_KEY }}" \
+              -e SERPER_API_KEY="${{ secrets.SERPER_API_KEY }}" \
               "$IMAGE_NAME"
