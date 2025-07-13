@@ -29,7 +29,6 @@ sio_app = socketio.ASGIApp(
 rooms = {}
 round_buffer = {}
 round_events = {}
-listen_acks = defaultdict(set)
 
 # ────────────────────────────── 각종 핸들러 및 게임 로직 import
 from websocket.events import *

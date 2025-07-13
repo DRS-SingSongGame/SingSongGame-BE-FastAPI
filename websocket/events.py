@@ -2,15 +2,8 @@ import sys
 sys.path.append("./.venv/Lib/site-packages")
 import asyncio
 import base64
-import os
 import random
-import time
-import hmac
-import hashlib
-import requests
-from collections import defaultdict
-from fastapi import FastAPI
-from main import sio, rooms, round_buffer, round_events, listen_acks
+from main import sio, rooms, round_buffer, round_events
 from utils import broadcast_room_update
 from game.analysis import analyze_recording
 from game.rounds import run_rounds
@@ -126,7 +119,7 @@ async def start_game(sid, data):
         {"round": 1, "maxRounds": room["max_rounds"]},
         room=room_id,
     )
-    await asyncio.sleep(10)
+    await asyncio.sleep(11)
     await run_rounds(room_id)
 
 @sio.on("chat")
@@ -136,15 +129,6 @@ async def handle_lobby_chat(sid, msg):
 @sio.on("room_chat")
 async def handle_room_chat(sid, data=None):
     await sio.emit("room_chat", {"message": data["message"]}, room=data["roomId"])
-
-@sio.on("listen_finished")
-async def handle_listen_finished(sid, data=None):
-    room_id = str(data["roomId"])
-
-    if room_id not in listen_acks:
-        listen_acks[room_id] = set()
-
-    listen_acks[room_id].add(sid)
 
 @sio.on("submit_recording")
 async def handle_submit_recording(sid, data):

@@ -17,7 +17,7 @@
 """
 from __future__ import annotations
 
-import asyncio, base64, hashlib, hmac, os, re, time, json, logging, difflib
+import asyncio, base64, hashlib, hmac, os, re, time, json, logging, difflib, random
 from typing import Any, Dict, List, Tuple
 
 import aiohttp
@@ -107,12 +107,16 @@ def _similarity(a: str, b: str) -> float:
     """Levenshtein 기반 유사도 (0.0 ~ 1.0)"""
     return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
+# ───────────────────────────────────────── scoring
 def _score_acr(sim: float) -> int:
-    return max(50, min(100, int(50 + sim * 50)))
+    """ACRCloud: 80점 기본 + 유사도(0~1) × 20 → 80~100점"""
+    return max(80, min(100, 80 + int(round(sim * 20))))
 
 def _score_stt(sim: float) -> int:
-    return max(30, min(80, int(30 + sim * 50)))
-
+    """STT·Serper: 60점 기본 + 종합점수(0~1) × 20 → 60~80점"""
+    base = max(60, min(80, 60 + int(round(sim * 20))))
+    bonus = random.randint(1, 10)
+    return min(base + bonus, 80)
 # ───────────────────────────────────────── external calls
 async def _call_acr(session: aiohttp.ClientSession, wav: bytes) -> Dict[str, Any]:
     ts = str(int(time.time()))
@@ -223,12 +227,14 @@ async def analyze_recording(raw: bytes, keyword: Dict[str, Any]) -> Dict[str, An
             t_title  = trk.get("title", "")
             t_artist = trk.get("artists", [{}])[0].get("name", "")
             if _match_keyword(keyword, t_title, t_artist):
-                sim = float(trk.get("score", 0)) / 100.0
+                sim = float(trk.get("score", 0))
+                score = _score_acr(sim)
+                print(f"🔵 ACR 유사도: {sim:.2f} → 점수: {score}")
                 return {
                     "matched": True,
                     "title":   t_title,
                     "artist":  t_artist,
-                    "score":   _score_acr(sim),
+                    "score":   score,
                     "source":  "acr",
                     "image":   s_img,  # 이미 Serper에서 얻은 이미지 재사용
                 }

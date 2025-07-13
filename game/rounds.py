@@ -1,4 +1,4 @@
-from main import sio, rooms, round_buffer, round_events, listen_acks
+from main import sio, rooms, round_buffer, round_events
 import asyncio
 
 async def run_rounds(room_id: str):
@@ -29,7 +29,7 @@ async def run_rounds(room_id: str):
                 },
                 room=room_id,
             )
-            await asyncio.sleep(10)
+            await asyncio.sleep(9)
 
             # 2) 녹음 시작
             await sio.emit("record_begin", {"playerSid": sid_turn, "turn": turn}, room=room_id)
@@ -49,11 +49,7 @@ async def run_rounds(room_id: str):
 
             # 4) listen phase
             await sio.emit("listen_phase", {"playerSid": sid_turn, "audio": audio_b64}, room=room_id)
-            try:
-                await asyncio.wait_for(_wait_for_acks(room_id, set(room["users"].keys())), timeout=12)
-            except asyncio.TimeoutError:
-                pass
-            listen_acks.pop(room_id, None)
+            await asyncio.sleep(10)
 
             # 5) 분석 결과 전송
             result = await analysis_future
@@ -66,7 +62,7 @@ async def run_rounds(room_id: str):
                 "playerSid":  sid_turn,
             }
             await sio.emit("round_result", result_payload, room=room_id)
-            await asyncio.sleep(5)
+            await asyncio.sleep(6)
 
     # 6) 최종 결과
     final_scores = [
@@ -74,9 +70,3 @@ async def run_rounds(room_id: str):
         for sid, score in room["scores"].items() if sid in room["users"]
     ]
     await sio.emit("game_result", {"scores": final_scores}, room=room_id)
-
-async def _wait_for_acks(room_id: str, sids: set[str]):
-    while True:
-        if listen_acks.get(room_id, set()) >= sids:
-            return
-        await asyncio.sleep(0.1) 
