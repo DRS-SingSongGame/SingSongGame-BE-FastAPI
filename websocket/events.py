@@ -4,6 +4,7 @@ import asyncio
 import base64
 import random
 from main import sio, rooms, round_buffer, round_events
+from audio_utils import convert_format
 from utils import broadcast_room_update
 from game.analysis import analyze_recording
 from game.rounds import run_rounds
@@ -86,6 +87,7 @@ async def mic_ready(sid, data):
 async def start_game(sid, data):
     room_id = data.get("roomId")
     max_rounds = int(data.get("maxRounds"))
+    demo_mode  = bool(data.get("demoMode", False))   # ← 추가
     room = rooms.get(room_id)
 
     if not room or sid not in room["users"] or sid != room["host"]:
@@ -93,15 +95,18 @@ async def start_game(sid, data):
     if room.get("state") == "playing":
         return
     
-    # KEYWORDS = [
-    #     {"type": "가수", "name": "장범준", "alias": ["Jang Beom June", "장범준"]},
-    #     {"type": "가수", "name": "Red Velvet", "alias": ["레드벨벳", "redvelvet"]},
-    # ]
+    KEYWORDS = [
+        {"type": "가수", "name": "장범준", "alias": ["Jang Beom June", "장범준"]},
+        {"type": "가수", "name": "Red Velvet", "alias": ["레드벨벳", "redvelvet"]},
+    ]
 
     # 플레이어 수에 맞춰 키워드 가져오기
     num_players = len(room["users"])
     total_keywords = num_players * max_rounds
-    room_keywords = await fetch_random_keywords(total_keywords)
+    if demo_mode:
+        room_keywords  = KEYWORDS
+    else:
+        room_keywords  = await fetch_random_keywords(total_keywords)
     room.update(
         {
             "state": "playing",
@@ -136,17 +141,21 @@ async def handle_submit_recording(sid, data):
     player_sid = data["playerSid"]
     turn = data.get("turn", -1)
     keyword    = data["keyword"]
-    audio      = data["audio"]  # bytes
+
+    audio_raw  = data["audio"]  # bytes (WebM/Opus)
+
+    # ── 🎙️ 서버-측 WAV 변환 ─────────────────────────────
+    wav16k = convert_format(audio_raw, for_whisper=True)  # 16 kHz·mono·PCM16
 
     # 저장 버퍼
-    key = f"{room_id}:{player_sid}:{turn}"
-    audio_b64 = base64.b64encode(audio).decode()
+    key        = f"{room_id}:{player_sid}:{turn}"
+    audio_b64  = base64.b64encode(wav16k).decode()        # **WAV** 데이터
 
     # 분석 비동기 태스크
     async def analyze():
         # audio: 클라이언트 원본 음성 파일
         # keyword: {type, name, alias}
-        return await analyze_recording(audio, keyword)
+        return await analyze_recording(audio_raw, keyword)
 
     # buffer 저장 및 이벤트 set (run_rounds 에서 생성된 이벤트가 있을 때만)
     round_buffer[key] = {"audio_b64": audio_b64, "future": asyncio.create_task(analyze())}
