@@ -48,8 +48,16 @@ async def run_rounds(room_id: str):
             del round_events[key]
 
             # 4) listen phase
-            await sio.emit("listen_phase", {"playerSid": sid_turn, "audio": audio_b64}, room=room_id)
-            await asyncio.sleep(10)
+            await sio.emit(
+                "listen_phase",
+                {
+                    "playerSid": sid_turn,
+                    "audio": audio_b64,     # 16 kHz·mono·PCM16 WAV를 base64
+                    "mime":  "audio/wav",
+                },
+                room=room_id,
+            )
+            await asyncio.sleep(9)
 
             # 5) 분석 결과 전송
             result = await analysis_future

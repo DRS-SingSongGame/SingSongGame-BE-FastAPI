@@ -19,6 +19,8 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY service/keyword_dataset.csv /app/service/keyword_dataset.csv
+
 # 5. 애플리케이션 소스 복사
 COPY . .
 
