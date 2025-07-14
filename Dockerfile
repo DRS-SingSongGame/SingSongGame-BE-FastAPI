@@ -9,6 +9,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ffmpeg \
        libsndfile1 \
+       default-mysql-client \
+       netcat-openbsd \
+       telnet \
     && rm -rf /var/lib/apt/lists/*
 
 # 4. Python 패키지 설치
