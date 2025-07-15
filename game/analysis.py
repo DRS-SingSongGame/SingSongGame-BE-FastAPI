@@ -17,11 +17,12 @@
 """
 from __future__ import annotations
 
-import asyncio, base64, hashlib, hmac, os, re, time, json, logging, difflib, random
+import asyncio, base64, hashlib, hmac, os, re, time, json, logging, difflib, random, unicodedata, io
 from typing import Any, Dict, List, Tuple
 
 import aiohttp
 from bs4 import BeautifulSoup
+from rapidfuzz import fuzz
 
 from audio_utils import convert_format
 
@@ -106,6 +107,89 @@ def _match_keyword(keyword: Dict[str, Any], title: str, artist: str) -> bool:
 def _similarity(a: str, b: str) -> float:
     """Levenshtein 기반 유사도 (0.0 ~ 1.0)"""
     return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+JOSA = ("은", "는", "이", "가", "을", "를", "에", "의", "로", "과", "와")
+
+VOWEL_SWAP = {  # jung index: 0~20 (unicode 한글 구성 규칙)
+    1: 5, 5: 1,     # ㅐ ↔ ㅔ  (재/제, 내/네 …)
+    0: 4, 4: 0,     # ㅏ ↔ ㅓ  (가/거 …)
+    8: 13, 13: 8,   # ㅗ ↔ ㅜ  (소/수 …)
+}
+
+def _swap_syllable_vowel(ch: str) -> str | None:
+    """한글 음절의 모음만 교체(받침X) → 새 글자 하나 반환"""
+    code = ord(ch) - 0xAC00
+    if not (0 <= code <= 11171):
+        return None                       # 한글 완성형 아님
+    cho, jung, jong = code // 588, (code % 588) // 28, code % 28
+    if jong != 0 or jung not in VOWEL_SWAP:  # 받침 있거나 교환표 없음
+        return None
+    jung2 = VOWEL_SWAP[jung]
+    return chr(0xAC00 + (cho * 588) + (jung2 * 28))
+
+def _strip_josa(token: str) -> str:
+    """끝에 붙은 조사 한 글자를 떼어낸다."""
+    if len(token) >= 2 and token[-1] in JOSA:
+        return token[:-1]
+    return token
+
+def _to_initials(hangul: str) -> str:
+    """'윤미래' → 'ㅇㅁㄹ' (초성열)"""
+    CHO = [chr(c) for c in range(0x1100, 0x1113)]
+    res = []
+    for ch in hangul:
+        code = ord(ch) - 0xAC00
+        if 0 <= code <= 11171:
+            res.append(CHO[code // 588])
+        else:
+            res.append(ch)
+    return "".join(res)
+
+def _normalize_korean(text: str) -> str:
+    # KC 정규화 + 소문자, 공백·특수문자 축약
+    txt = unicodedata.normalize("NFKC", text).lower()
+    txt = re.sub(r"[^가-힣a-z0-9]+", " ", txt).strip()
+    return txt
+
+def _keyword_variants(name: str, aliases: List[str]) -> List[str]:
+    basics = [name] + [_normalize_korean(a) for a in aliases if a]
+    extras = []
+
+    # 기존 변형: 초성·한글만
+    for w in basics:
+        extras += [_to_initials(w), re.sub(r"[^가-힣]", "", w)]
+
+    # 🎯 추가: 모음군 교환 변형
+    for w in basics:
+        chars = list(w)
+        for i, ch in enumerate(chars):
+            repl = _swap_syllable_vowel(ch)
+            if repl:
+                changed = chars.copy()
+                changed[i] = repl
+                extras.append("".join(changed))
+
+    return list({w for w in basics + extras if w})
+
+def remove_keyword_like_tokens(stt_text: str, keyword: dict) -> str:
+    raw_alias = keyword.get("alias", "")
+    if isinstance(raw_alias, list):
+        alias_list = raw_alias
+    else:                                 # "a|b|c" 형태
+        alias_list = raw_alias.split("|") if raw_alias else []
+
+    targets = _keyword_variants(keyword["name"], alias_list)
+    clean_tokens = []
+    for raw_tok in _normalize_korean(stt_text).split():
+        tok = _strip_josa(raw_tok)                    # ② 조사 제거
+        matched = any(
+            fuzz.ratio(tok, kw) >= 75                 # ④ 유사도 75%
+            for kw in targets
+        )
+        if not matched:
+            clean_tokens.append(raw_tok)
+
+    return " ".join(clean_tokens)
 
 # ───────────────────────────────────────── scoring
 def _score_acr(sim: float) -> int:
@@ -199,12 +283,22 @@ async def analyze_recording(raw: bytes, keyword: Dict[str, Any]) -> Dict[str, An
 
         acr_json  = await acr_task
         lyrics    = await stt_task
-
         print("\n🟦 Whisper 추출 가사:\n", lyrics)
+
+        if keyword.get("type") == "가수":
+            lyrics_clean = remove_keyword_like_tokens(lyrics, keyword)
+            print("🟢 키워드 제거 후:", lyrics_clean or "<empty>")
+        else:                     # 제목 키워드는 그대로 둠
+            lyrics_clean = lyrics
+
+        if not lyrics_clean.strip():
+            print("🛑 키워드만 포함 → Serper 건너뜀")
+            lyrics_clean = None    # 아래에서 falsy 체크용
 
         # Serper Search
         s_title, s_artist, s_img = await _serper_search(
-            session, (lyrics[:100] + " 가사") if lyrics else ""
+            session,
+            (lyrics_clean[:100] + " 가사") if lyrics_clean else ""
         )
 
         # 🔵 Serper 결과 출력
