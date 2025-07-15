@@ -96,7 +96,7 @@ async def start_game(sid, data):
         return
     
     KEYWORDS = [
-        {"type": "가수", "name": "장범준", "alias": ["장범준", "버스커버스커"]},
+        {"type": "가수", "name": "버즈", "alias": ["buzz", "민경훈"]},
         {"type": "가수", "name": "송대관", "alias": ["송대관", "Song Dae Kwan"]},
     ]
 
