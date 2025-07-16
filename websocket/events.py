@@ -87,7 +87,6 @@ async def mic_ready(sid, data):
 async def start_game(sid, data):
     room_id = data.get("roomId")
     max_rounds = int(data.get("maxRounds"))
-    demo_mode  = bool(data.get("demoMode", False))   # ← 추가
     room = rooms.get(room_id)
 
     if not room or sid not in room["users"] or sid != room["host"]:
@@ -96,17 +95,14 @@ async def start_game(sid, data):
         return
     
     KEYWORDS = [
-        {"type": "가수", "name": "버즈", "alias": ["buzz", "민경훈"]},
-        {"type": "가수", "name": "송대관", "alias": ["송대관", "Song Dae Kwan"]},
+        # {"type": "가수", "name": "버즈", "alias": ["buzz", "민경훈"]},
+        # {"type": "가수", "name": "송대관", "alias": ["송대관", "Song Dae Kwan"]},
     ]
 
     # 플레이어 수에 맞춰 키워드 가져오기
     num_players = len(room["users"])
     total_keywords = num_players * max_rounds
-    if demo_mode:
-        room_keywords  = KEYWORDS
-    else:
-        room_keywords  = await fetch_random_keywords(total_keywords)
+    room_keywords = KEYWORDS or await fetch_random_keywords(total_keywords)
     room.update(
         {
             "state": "playing",
