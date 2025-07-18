@@ -23,6 +23,7 @@ async def connect(sid, environ):
 async def join_room(sid, data):
     room_id = data["roomId"]
     user_id  = data["userId"]
+    nick = data["nickname"]
 
     if room_id not in rooms:
         rooms[room_id] = {"users": {}, "order": [], "host": sid, "state": "waiting"}
@@ -48,6 +49,11 @@ async def join_room(sid, data):
 
     await sio.enter_room(sid, room_id)
     await broadcast_room_update(room_id)
+    await sio.emit(
+        "room_chat",
+        {"message": f"{nick}님이 입장하셨습니다.", "msgType": "join"},
+        room=room_id,
+    )
 
 @sio.event
 async def toggle_ready(sid, data=None):
@@ -61,15 +67,31 @@ async def toggle_ready(sid, data=None):
 async def leave_room(sid, data=None):
     for rid, room in rooms.items():
         if sid in room["users"]:
-            room["users"].pop(sid, None)
+            # 현재 턴 Event 강제로 해제
+            for key, ev in list(round_events.items()):
+                if key.startswith(f"{rid}:{sid}:"):
+                    ev.set()
+                    round_events.pop(key, None)
+
+            leaver = room["users"].pop(sid, None)
             room["order"] = [s for s in room["order"] if s != sid]
 
             if room["host"] == sid and room["users"]:
-                room["host"] = next(iter(room["users"].keys()))
+                room["host"] = next(iter(room["users"]))
 
             await broadcast_room_update(rid)
+
             if not room["users"]:
                 del rooms[rid]
+            # 시스템 채팅 브로드캐스트
+            if leaver and rid in rooms:
+                nick = leaver["nickname"]
+                await sio.emit(
+                    "room_chat",
+                    {"message": f"{nick}님이 게임 방을 나갔습니다.",
+                     "msgType": 'leave'},
+                    room=rid,
+                )
             break
 
 @sio.event
@@ -129,7 +151,12 @@ async def handle_lobby_chat(sid, msg):
 
 @sio.on("room_chat")
 async def handle_room_chat(sid, data=None):
-    await sio.emit("room_chat", {"message": data["message"]}, room=data["roomId"])
+    # data: { roomId, message, msgType='chat' }
+    await sio.emit(
+        "room_chat",
+        {"message": data["message"], "msgType": data.get("msgType", "chat")},
+        room=data["roomId"],
+    )
 
 @sio.on("submit_recording")
 async def handle_submit_recording(sid, data):
