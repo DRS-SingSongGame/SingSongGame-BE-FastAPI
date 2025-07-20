@@ -117,8 +117,8 @@ async def start_game(sid, data):
         return
     
     KEYWORDS = [
-        # {"type": "가수", "name": "버즈", "alias": ["buzz", "민경훈"]},
-        # {"type": "가수", "name": "송대관", "alias": ["송대관", "Song Dae Kwan"]},
+        {"type": "가수", "name": "버즈", "alias": ["buzz", "민경훈"]},
+        {"type": "가수", "name": "태진아", "alias": ["태진아", "Tae Jin Ah"]},
     ]
 
     # 플레이어 수에 맞춰 키워드 가져오기
