@@ -1,23 +1,40 @@
 from main import sio, rooms, round_buffer, round_events
 import asyncio
 
+TURN_TIMEOUT = 12   # 녹음 제출 대기
+LISTEN_LEN   = 9
+RECORD_LEN   = 10
+KW_LEN       = 9
+
 async def run_rounds(room_id: str):
-    if room_id not in rooms:
-        return
-    
-    room = rooms[room_id]
-    order = room["order"][:]
+    room = rooms.get(room_id)
+    if not room: return
+
     max_rounds = room["max_rounds"]
 
     for rnd in range(1, max_rounds + 1):
         room["round"] = rnd
 
-        for turn, sid_turn in enumerate(order):
-            kw_idx = room["kw_idx"]
-            keyword = room["keywords"][kw_idx]
+        turn_idx = 0
+        while turn_idx < len(room["order"]):
+            sid_turn = room["order"][turn_idx]
+
+            # 탈주자면 즉시 skip
+            if sid_turn not in room["users"]:
+                turn_idx += 1
+                continue
+
+            # ──❶ 플레이어가 keyword 페이즈 사이에 나갔으면 즉시 skip
+            if sid_turn not in room["users"]:
+                continue          # turn_idx 그대로 → 새 플레이어가 같은 인덱스로 당겨짐
+
+            keyword = room["keywords"][room["kw_idx"]]
             room["kw_idx"] += 1
             nick = room["users"][sid_turn]["nickname"]
 
+            key_kw = f"{room_id}:{sid_turn}:{turn_idx}:kw"
+            kw_event = asyncio.Event()
+            round_events[key_kw] = kw_event            # leave_room()에서 set 가능
             await sio.emit(
                 "keyword_phase",
                 {
@@ -29,23 +46,40 @@ async def run_rounds(room_id: str):
                 },
                 room=room_id,
             )
-            await asyncio.sleep(9)
+            try:
+                await asyncio.wait_for(kw_event.wait(), timeout=KW_LEN)
+            except asyncio.TimeoutError:
+                pass                                   # 8초 정상 경과
+            finally:
+                round_events.pop(key_kw, None)         # 정리
+
+            if sid_turn not in room["users"]:
+                continue
 
             # 2) 녹음 시작
-            await sio.emit("record_begin", {"playerSid": sid_turn, "turn": turn}, room=room_id)
-            await asyncio.sleep(10)
-
-            # 3) 이벤트 및 버퍼 초기화
-            key = f"{room_id}:{sid_turn}:{turn}"
+            key   = f"{room_id}:{sid_turn}:{turn_idx}"
             event = asyncio.Event()
             round_events[key] = event
-            await event.wait()
+
+            await sio.emit("record_begin",
+                           {"playerSid": sid_turn, "turn": turn_idx},
+                           room=room_id)
+
+            # • 녹음 제출, • 중도 탈주(set()), • 10 초 경과  → 셋 중 먼저 도달
+            try:
+                await asyncio.wait_for(event.wait(), timeout=RECORD_LEN + 2)
+            except asyncio.TimeoutError:
+                pass    # 그냥 넘어가면 아래에서 buf가 없어서 skip 처리됨
+
             buf = round_buffer.pop(key, None)
             if not buf:
+                # 제출이 없었거나 탈주 → skip
+                if sid_turn in room["users"]:
+                    turn_idx += 1   # ‘남아 있지만 제출X’만 인덱스 증가
                 continue
+
             analysis_future = buf["future"]
             audio_b64       = buf["audio_b64"]
-            del round_events[key]
 
             # 4) listen phase
             await sio.emit(
@@ -57,24 +91,25 @@ async def run_rounds(room_id: str):
                 },
                 room=room_id,
             )
-            await asyncio.sleep(9)
+            await asyncio.sleep(LISTEN_LEN)
 
             # 5) 분석 결과 전송
             result = await analysis_future
             if sid_turn in room["scores"]:
                 room["scores"][sid_turn] += result.get("score", 0)
         
-            result_payload = {
-                **result,
-                "playerNick": nick,
-                "playerSid":  sid_turn,
-            }
-            await sio.emit("round_result", result_payload, room=room_id)
-            await asyncio.sleep(6)
+            await sio.emit("round_result",
+                           {**result, "playerNick": nick, "playerSid": sid_turn},
+                           room=room_id)
+            await asyncio.sleep(6)          # result 표시 대기
+            turn_idx += 1                   # 정상 완료 → 인덱스 증가
+        
+        # while end
+    # for rnd
 
-    # 6) 최종 결과
+    # 6) 최종 결과 (남아 있는 인원만 표시)
     final_scores = [
-        {"nickname": room["users"][sid]["nickname"], "score": score}
-        for sid, score in room["scores"].items() if sid in room["users"]
+        {"nickname": u["nickname"], "score": room["scores"][sid]}
+        for sid, u in room["users"].items()
     ]
     await sio.emit("game_result", {"scores": final_scores}, room=room_id)

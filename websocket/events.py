@@ -23,6 +23,7 @@ async def connect(sid, environ):
 async def join_room(sid, data):
     room_id = data["roomId"]
     user_id  = data["userId"]
+    nick = data["nickname"]
 
     if room_id not in rooms:
         rooms[room_id] = {"users": {}, "order": [], "host": sid, "state": "waiting"}
@@ -48,6 +49,11 @@ async def join_room(sid, data):
 
     await sio.enter_room(sid, room_id)
     await broadcast_room_update(room_id)
+    await sio.emit(
+        "room_chat",
+        {"message": f"{nick}님이 입장하셨습니다.", "msgType": "join"},
+        room=room_id,
+    )
 
 @sio.event
 async def toggle_ready(sid, data=None):
@@ -61,15 +67,31 @@ async def toggle_ready(sid, data=None):
 async def leave_room(sid, data=None):
     for rid, room in rooms.items():
         if sid in room["users"]:
-            room["users"].pop(sid, None)
+            # 현재 턴 Event 강제로 해제
+            for key, ev in list(round_events.items()):
+                if key.startswith(f"{rid}:{sid}:"):
+                    ev.set()
+                    round_events.pop(key, None)
+
+            leaver = room["users"].pop(sid, None)
             room["order"] = [s for s in room["order"] if s != sid]
 
             if room["host"] == sid and room["users"]:
-                room["host"] = next(iter(room["users"].keys()))
+                room["host"] = next(iter(room["users"]))
 
             await broadcast_room_update(rid)
+
             if not room["users"]:
                 del rooms[rid]
+            # 시스템 채팅 브로드캐스트
+            if leaver and rid in rooms:
+                nick = leaver["nickname"]
+                await sio.emit(
+                    "room_chat",
+                    {"message": f"{nick}님이 게임 방을 나갔습니다.",
+                     "msgType": 'leave'},
+                    room=rid,
+                )
             break
 
 @sio.event
@@ -87,7 +109,6 @@ async def mic_ready(sid, data):
 async def start_game(sid, data):
     room_id = data.get("roomId")
     max_rounds = int(data.get("maxRounds"))
-    demo_mode  = bool(data.get("demoMode", False))   # ← 추가
     room = rooms.get(room_id)
 
     if not room or sid not in room["users"] or sid != room["host"]:
@@ -97,16 +118,13 @@ async def start_game(sid, data):
     
     KEYWORDS = [
         {"type": "가수", "name": "버즈", "alias": ["buzz", "민경훈"]},
-        {"type": "가수", "name": "송대관", "alias": ["송대관", "Song Dae Kwan"]},
+        {"type": "가수", "name": "태진아", "alias": ["태진아", "Tae Jin Ah"]},
     ]
 
     # 플레이어 수에 맞춰 키워드 가져오기
     num_players = len(room["users"])
     total_keywords = num_players * max_rounds
-    if demo_mode:
-        room_keywords  = KEYWORDS
-    else:
-        room_keywords  = await fetch_random_keywords(total_keywords)
+    room_keywords = KEYWORDS or await fetch_random_keywords(total_keywords)
     room.update(
         {
             "state": "playing",
@@ -133,7 +151,12 @@ async def handle_lobby_chat(sid, msg):
 
 @sio.on("room_chat")
 async def handle_room_chat(sid, data=None):
-    await sio.emit("room_chat", {"message": data["message"]}, room=data["roomId"])
+    # data: { roomId, message, msgType='chat' }
+    await sio.emit(
+        "room_chat",
+        {"message": data["message"], "msgType": data.get("msgType", "chat")},
+        room=data["roomId"],
+    )
 
 @sio.on("submit_recording")
 async def handle_submit_recording(sid, data):
