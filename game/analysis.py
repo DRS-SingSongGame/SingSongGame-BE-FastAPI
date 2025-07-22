@@ -193,13 +193,15 @@ def remove_keyword_like_tokens(stt_text: str, keyword: dict) -> str:
 
 # ───────────────────────────────────────── scoring
 def _score_acr(sim: float) -> int:
-    """ACRCloud: 80점 기본 + 유사도(0~1) × 20 → 80~100점"""
-    return max(80, min(100, 80 + int(round(sim * 20))))
+    """ACRCloud: 80점 기본 + 유사도(0~1) × 15 → 80~95점 + 랜덤 보정 1~5점 → 최종 81~100점"""
+    base = max(80, min(95, 80 + int(round(sim * 15))))
+    bonus = random.randint(1, 5)
+    return min(base + bonus, 100)
 
 def _score_stt(sim: float) -> int:
-    """STT·Serper: 60점 기본 + 종합점수(0~1) × 20 → 60~80점"""
-    base = max(60, min(80, 60 + int(round(sim * 20))))
-    bonus = random.randint(1, 10)
+    """STT·Serper: 60점 기본 + 종합점수(0~1) × 15 → 60~75점 + 랜덤 보정 1~5점 → 최종 61~80점"""
+    base = max(60, min(75, 60 + int(round(sim * 15))))
+    bonus = random.randint(1, 5)
     return min(base + bonus, 80)
 # ───────────────────────────────────────── external calls
 async def _call_acr(session: aiohttp.ClientSession, wav: bytes) -> Dict[str, Any]:
