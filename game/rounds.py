@@ -2,7 +2,7 @@ from main import sio, rooms, round_buffer, round_events
 import asyncio
 
 TURN_TIMEOUT = 12   # 녹음 제출 대기
-LISTEN_LEN   = 9
+LISTEN_LEN   = 10
 RECORD_LEN   = 10
 KW_LEN       = 9
 
@@ -94,7 +94,20 @@ async def run_rounds(room_id: str):
             await asyncio.sleep(LISTEN_LEN)
 
             # 5) 분석 결과 전송
-            result = await analysis_future
+            try:
+                result = await asyncio.wait_for(
+                    analysis_future,
+                    timeout=LISTEN_LEN + 0.5,   # 10.5 s 내 미도착 → 실패 처리
+                )
+            except asyncio.TimeoutError:
+                analysis_future.cancel()
+                result = {
+                    "matched": False,
+                    "title":   None,
+                    "artist":  None,
+                    "score":   0,
+                    "image":   None,
+                }
             if sid_turn in room["scores"]:
                 room["scores"][sid_turn] += result.get("score", 0)
         
