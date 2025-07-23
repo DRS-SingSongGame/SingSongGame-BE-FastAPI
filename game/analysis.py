@@ -191,6 +191,32 @@ def remove_keyword_like_tokens(stt_text: str, keyword: dict) -> str:
 
     return " ".join(clean_tokens)
 
+# 10 초짜리 listen 페이즈 안에서 두 API가 끝나도록 제한
+CALL_BUDGET      = 8.5   # 총 예산 (초)
+PER_CALL_TIMEOUT = 4.0   # 1회 호출 최대 (초)
+RETRY            = 1     # 재시도 1회
+
+async def _call_with_retry(fn, *args, **kw):
+    """
+    외부 API(fn) 호출을 예산 안에서 RETRY+1 번 시도.
+    실패하면 None 반환.
+    """
+    deadline = time.monotonic() + CALL_BUDGET
+    last_exc = None
+    for _ in range(RETRY + 1):
+        remain = deadline - time.monotonic()
+        if remain <= 0:
+            break
+        try:
+            return await asyncio.wait_for(
+                fn(*args, **kw),
+                timeout=min(remain, PER_CALL_TIMEOUT),
+            )
+        except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+            last_exc = e
+    logging.getLogger(__name__).warning("%s 실패: %s", fn.__name__, last_exc)
+    return None
+
 # ───────────────────────────────────────── scoring
 def _score_acr(sim: float) -> int:
     """ACRCloud: 80점 기본 + 유사도(0~1) × 15 → 80~95점 + 랜덤 보정 1~5점 → 최종 81~100점"""
@@ -218,7 +244,11 @@ async def _call_acr(session: aiohttp.ClientSession, wav: bytes) -> Dict[str, Any
     form.add_field("timestamp",         ts)
     form.add_field("sample", wav, filename="sample.wav", content_type="audio/wav")
 
-    async with session.post(f"https://{ACR_HOST}{ACR_URI}", data=form, timeout=10) as resp:
+    async with session.post(
+            f"https://{ACR_HOST}{ACR_URI}",
+            data=form,
+            timeout=PER_CALL_TIMEOUT + 2,
+    ) as resp:
         resp.raise_for_status()
         return await resp.json(content_type=None)
 
@@ -229,7 +259,12 @@ async def _call_whisper(session: aiohttp.ClientSession, wav: bytes) -> str:
     form.add_field("response_format", "json")
     headers = {"Authorization": f"Bearer {LF_API_KEY}"}
 
-    async with session.post(LEMON_URL, data=form, headers=headers, timeout=15) as r:
+    async with session.post(
+            LEMON_URL,
+            data=form,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=PER_CALL_TIMEOUT),
+    ) as r:
         r.raise_for_status()
         j = await r.json()
     return j.get("text", "").strip()
@@ -280,11 +315,20 @@ async def analyze_recording(raw: bytes, keyword: Dict[str, Any]) -> Dict[str, An
     wav_stt = convert_format(raw, for_whisper=True)    # 16 kHz
 
     async with aiohttp.ClientSession() as session:
-        acr_task  = asyncio.create_task(_call_acr(session, wav_hum))
-        stt_task  = asyncio.create_task(_call_whisper(session, wav_stt))
+        acr_task = asyncio.create_task(
+            _call_with_retry(_call_acr, session, wav_hum)
+        )
+        stt_task = asyncio.create_task(
+            _call_with_retry(_call_whisper, session, wav_stt)
+        )
+        acr_json, lyrics = await asyncio.gather(
+            acr_task, stt_task, return_exceptions=True
+        )
 
-        acr_json  = await acr_task
-        lyrics    = await stt_task
+        if isinstance(acr_json, Exception) or acr_json is None:
+            acr_json = {}
+        if isinstance(lyrics, Exception) or lyrics is None:
+            lyrics = ""
         print("\n🟦 Whisper 추출 가사:\n", lyrics)
 
         if keyword.get("type") == "가수":
