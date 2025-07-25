@@ -30,6 +30,13 @@ async def join_room(sid, data):
 
     room = rooms[room_id]
 
+    if room["state"] == "playing":
+        await sio.emit("redirect_lobby",
+                       {"reason": "서버와 연결이 끊겨 게임에서 제외되었습니다."},
+                       to=sid)
+        await sio.disconnect(sid)
+        return
+
     stale_sids = [old_sid for old_sid, u in room["users"].items() if u["id"] == user_id]
     for old_sid in stale_sids:
         room["users"].pop(old_sid, None)
@@ -45,7 +52,8 @@ async def join_room(sid, data):
         "ready": sid == room["host"],
         "mic": False
     }
-    room["order"].append(sid)
+    if sid not in room["order"]:
+        room["order"].append(sid)
 
     await sio.enter_room(sid, room_id)
     await broadcast_room_update(room_id)
@@ -77,8 +85,9 @@ async def leave_room(sid, data=None):
             room["order"] = [s for s in room["order"] if s != sid]
 
             if room["host"] == sid and room["users"]:
-                room["host"] = next(iter(room["users"]))
-
+                new_host = next(iter(room["users"]))
+                room["host"] = new_host
+                room["users"][new_host]["ready"] = True
             await broadcast_room_update(rid)
 
             if not room["users"]:
@@ -93,6 +102,7 @@ async def leave_room(sid, data=None):
                     room=rid,
                 )
             break
+    await sio.disconnect(sid)
 
 @sio.event
 async def disconnect(sid, data=None):
@@ -117,8 +127,8 @@ async def start_game(sid, data):
         return
     
     KEYWORDS = [
-        {"type": "가수", "name": "버즈", "alias": ["buzz", "민경훈"]},
-        {"type": "가수", "name": "소찬휘", "alias": ["소찬휘", "So Chan Whee"]},
+        {"type": "가수", "name": "임한별", "alias": ["Lim Han Byul", "임한별"]},
+        {"type": "가수", "name": "Red Velvet", "alias": ["레드벨벳", "redvelvet"]},
     ]
 
     # 플레이어 수에 맞춰 키워드 가져오기
